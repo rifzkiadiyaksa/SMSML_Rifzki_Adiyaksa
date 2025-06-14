@@ -1,60 +1,70 @@
-# modelling_tuning.py
+# modelling_dagshub.py
 
-import mlflow
+# Import library yang dibutuhkan
 import pandas as pd
 from sklearn.neighbors import KNeighborsClassifier
 from datetime import datetime
+import mlflow
+import dagshub
+import joblib
 
-# Konfigurasi MLflow (sama seperti sebelumnya)
-mlflow.set_tracking_uri("http://127.0.0.1:5000/")
-mlflow.set_experiment("submission_rifzki_hyperparameter_tuning")
+# 1. Inisialisasi koneksi ke DagsHub
+# Baris ini secara otomatis mengatur MLflow Tracking URI untuk Anda.
+dagshub.init(repo_owner='rifzkiadiyaksa', repo_name='SMSML_Rifzki_Adiyaksa', mlflow=True)
 
-# Muat data yang sudah diproses
-train_df = pd.read_csv('lung_cancer_train_preprocessed.csv')
-test_df = pd.read_csv('lung_cancer_test_preprocessed.csv')
+# 2. Set nama eksperimen di DagsHub
+# Anda bisa memilih nama yang lebih deskriptif untuk eksperimen ini
+mlflow.set_experiment("KNN_Production_Model_DagsHub")
 
+# 3. Muat data yang sudah diproses dari Kriteria 1
+# Pastikan file CSV berada di direktori yang sama dengan skrip ini
+try:
+    train_df = pd.read_csv('lung_cancer_train_preprocessed.csv')
+    test_df = pd.read_csv('lung_cancer_test_preprocessed.csv')
+except FileNotFoundError:
+    print("Error: Pastikan file 'lung_cancer_train_preprocessed.csv' dan 'lung_cancer_test_preprocessed.csv' ada di folder yang sama.")
+    exit()
+
+# Pisahkan fitur dan target
 X_train = train_df.drop('LUNG_CANCER', axis=1)
 y_train = train_df['LUNG_CANCER']
 X_test = test_df.drop('LUNG_CANCER', axis=1)
 y_test = test_df['LUNG_CANCER']
 
-# Input example untuk model signature
+# Contoh input untuk logging model (best practice)
 input_example = X_train.head(5)
 
-# 1. Tentukan rentang hyperparameter untuk diuji
-list_n_neighbors = [3, 5, 7, 9, 11]
-algorithm = 'auto'
+# 4. Mulai MLflow run
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+run_name = f"KNN_DagsHub_Run_{timestamp}"
 
-print("Memulai eksperimen Hyperparameter Tuning untuk KNN...")
+print(f"Memulai run: {run_name}")
 
-# 2. Lakukan iterasi untuk setiap nilai hyperparameter
-for n in list_n_neighbors:
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"KNN_Tuning_n_{n}_{timestamp}"
+with mlflow.start_run(run_name=run_name):
+    # Log parameter yang digunakan untuk run ini
+    n_neighbors = 7  # Anda bisa mengubah parameter ini
+    algorithm = 'auto'
+    mlflow.log_param("n_neighbors", n_neighbors)
+    mlflow.log_param("algorithm", algorithm)
+
+    # Latih model machine learning
+    model = KNeighborsClassifier(n_neighbors=n_neighbors, algorithm=algorithm)
+    model.fit(X_train, y_train)
+
+    # Evaluasi model dan log metriknya
+    accuracy = model.score(X_test, y_test)
+    mlflow.log_metric("accuracy", accuracy)
+
+    # Log model sebagai artefak di DagsHub
+    mlflow.sklearn.log_model(
+        sk_model=model,
+        artifact_path="model", # Ini akan membuat folder 'model' di DagsHub
+        input_example=input_example
+    )
     
-    # 3. Mulai run baru untuk setiap iterasi
-    with mlflow.start_run(run_name=run_name):
-        # Log parameter yang digunakan di run ini
-        mlflow.log_param("n_neighbors", n)
-        mlflow.log_param("algorithm", algorithm)
+    # (Opsional) Simpan model secara lokal juga jika diperlukan
+    joblib.dump(model, "knn_model.pkl")
 
-        # Latih model dengan hyperparameter saat ini
-        model = KNeighborsClassifier(n_neighbors=n, algorithm=algorithm)
-        model.fit(X_train, y_train)
-
-        # Log model sebagai artefak
-        mlflow.sklearn.log_model(
-            sk_model=model,
-            artifact_path="model",
-            input_example=input_example
-        )
-
-        # Evaluasi dan log metrik
-        accuracy = model.score(X_test, y_test)
-        mlflow.log_metric("accuracy", accuracy)
-
-        print(f"Run '{run_name}' selesai.")
-        print(f"  n_neighbors: {n}")
-        print(f"  Akurasi: {accuracy}\n")
-
-print("Eksperimen Hyperparameter Tuning selesai.")
+    print(f"\nRun '{run_name}' selesai.")
+    print(f"Akurasi model: {accuracy:.4f}")
+    print("✅ Log dan artefak telah berhasil dikirim ke DagsHub repository Anda.")
