@@ -1,76 +1,90 @@
-# modelling.py (Versi DagsHub)
-
-import pandas as pd
 import mlflow
-import mlflow.sklearn
-import dagshub  # Import library DagsHub
+import pandas as pd
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import os
+from datetime import datetime
+import dagshub
+import json
 
-# --- Inisialisasi DagsHub ---
-# Baris ini akan secara otomatis mengkonfigurasi MLflow untuk terhubung ke DagsHub
+# --- KOREKSI KRITIKAL: Inisialisasi DagsHub MLflow tracking dengan kredensial rifzkiadiyaksa ---
 dagshub.init(repo_owner='rifzkiadiyaksa', repo_name='SMSML_Rifzki_Adiyaksa', mlflow=True)
-print("Koneksi ke DagsHub MLflow Tracking Server telah diinisialisasi.")
 
-# Nama eksperimen Anda
-experiment_name = "Lung_Cancer_Prediction_Basic"
-mlflow.set_experiment(experiment_name)
-print(f"Eksperimen diatur ke '{experiment_name}'")
+# --- KOREKSI KRITIKAL: Set MLflow tracking URI ke DagsHub rifzkiadiyaksa ---
+mlflow.set_tracking_uri("https://dagshub.com/rifzkiadiyaksa/SMSML_Rifzki_Adiyaksa.mlflow")
 
-# Memuat Data Latih dan Uji
+# Nama eksperimen MLflow
+mlflow.set_experiment("Lung Cancer Prediction Model")
+
+# Muat data yang sudah diproses
+# Pastikan file-file ini sudah disalin ke /content/ sebelum menjalankan script
+train_data_path = "/content/lung_cancer_train_preprocessed.csv"
+test_data_path = "/content/lung_cancer_test_preprocessed.csv"
+
 try:
-    train_data = pd.read_csv('lung_cancer_train_preprocessed.csv')
-    test_data = pd.read_csv('lung_cancer_test_preprocessed.csv')
-    print("Data latih dan uji berhasil dimuat.")
+    X_train = pd.read_csv(train_data_path).drop("lung_cancer", axis=1)
+    y_train = pd.read_csv(train_data_path)["lung_cancer"]
+    X_test = pd.read_csv(test_data_path).drop("lung_cancer", axis=1)
+    y_test = pd.read_csv(test_data_path)["lung_cancer"]
+    print(f"Data train dari '{train_data_path}' berhasil dimuat.")
+    print(f"Data test dari '{test_data_path}' berhasil dimuat.")
 except FileNotFoundError as e:
-    print(f"Error: {e}. Pastikan file CSV berada di folder yang sama.")
-    exit()
+    print(f"Error: File data tidak ditemukan. Pastikan file ada di '{train_data_path}' dan '{test_data_path}'.")
+    raise e
 
-# Memisahkan fitur (X) dan target (y)
-X_train = train_data.drop('LUNG_CANCER', axis=1)
-y_train = train_data['LUNG_CANCER']
-X_test = test_data.drop('LUNG_CANCER', axis=1)
-y_test = test_data['LUNG_CANCER']
-print("Fitur dan target telah dipisahkan.")
+# Contoh input untuk logging model (ambil 5 sampel dari X_train)
+input_example = X_train.sample(5)
 
-# Memulai Run MLflow
-with mlflow.start_run() as run:
-    print(f"\nMemulai run baru: {run.info.run_id}")
+# Buat nama run unik dengan timestamp
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+run_name = f"KNN_Modelling_ManualLog_{timestamp}"
 
-    # Melatih Model
-    model = LogisticRegression(random_state=42)
+with mlflow.start_run(run_name=run_name):
+    mlflow.autolog(disable=True) # Nonaktifkan autolog untuk manual logging
+
+    # Definisikan parameter model
+    n_neighbors = 5
+    algorithm = 'auto'
+    
+    # Log parameter secara manual
+    mlflow.log_param("n_neighbors", n_neighbors)
+    mlflow.log_param("algorithm", algorithm)
+    print(f"Parameter: n_neighbors={n_neighbors}, algorithm={algorithm} telah dilog.")
+
+    # Latih model K-Nearest Neighbors
+    model = KNeighborsClassifier(n_neighbors=n_neighbors, algorithm=algorithm)
     model.fit(X_train, y_train)
-    print("Model Logistic Regression telah dilatih.")
+    print("Model KNN berhasil dilatih.")
 
-    # Membuat prediksi pada data uji
+    # Lakukan prediksi
     y_pred = model.predict(X_test)
-    print("Prediksi pada data uji telah dibuat.")
 
-    # Mencatat Parameter
-    params = model.get_params()
-    mlflow.log_params(params)
-    print("Parameter model telah dicatat:", params)
-
-    # Mencatat Metrik
+    # Hitung metrik evaluasi
     accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='binary')
+    recall = recall_score(y_test, y_pred, average='binary')
+    f1 = f1_score(y_test, y_pred, average='binary')
 
+    # Log metrik secara manual
     mlflow.log_metric("accuracy", accuracy)
     mlflow.log_metric("precision", precision)
     mlflow.log_metric("recall", recall)
     mlflow.log_metric("f1_score", f1)
-    print("Metrik evaluasi telah dicatat.")
-    print(f"  Accuracy: {accuracy:.4f}")
-    print(f"  Precision: {precision:.4f}")
-    print(f"  Recall: {recall:.4f}")
-    print(f"  F1-Score: {f1:.4f}")
+    print(f"Metrik: Accuracy={accuracy:.4f}, Precision={precision:.4f}, Recall={recall:.4f}, F1-score={f1:.4f} telah dilog.")
 
-    # Mencatat Model (Artefak)
-    mlflow.sklearn.log_model(model, "model")
-    print("Model telah dicatat sebagai artefak.")
+    # Log model ke MLflow
+    mlflow.sklearn.log_model(
+        sk_model=model,
+        artifact_path="knn_model", # Nama artefak model
+        input_example=input_example,
+        registered_model_name="KNNLungCancerModel" # Daftarkan model jika ingin di Registry
+    )
+    print("Model berhasil dilog ke MLflow.")
 
-    print("\nRun MLflow selesai dan dikirim ke DagsHub.")
+    # Log artefak tambahan (misalnya daftar kolom fitur)
+    with open("feature_columns.txt", "w") as f:
+        json.dumps(X_train.columns.tolist())
+    mlflow.log_artifact("feature_columns.txt")
+    print("Daftar kolom fitur telah dilog sebagai artefak.")
+
+print("MLflow Run selesai. Cek DagsHub untuk detailnya.")
